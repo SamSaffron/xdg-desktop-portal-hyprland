@@ -17,6 +17,12 @@ void ElidedButton::setText(QString text)
     updateText();
 }
 
+void ElidedButton::setIcon(const QIcon &icon)
+{
+    QPushButton::setIcon(icon);
+    updateText();
+}
+
 void ElidedButton::resizeEvent(QResizeEvent *event)
 {
     QPushButton::resizeEvent(event);
@@ -26,6 +32,7 @@ void ElidedButton::resizeEvent(QResizeEvent *event)
 void ElidedButton::updateText()
 {
     QFontMetrics metrics(font());
-    QString elided = metrics.elidedText(og_text, Qt::ElideRight, width() - 15);
+    int iconW = icon().isNull() ? 0 : iconSize().width() + 10;
+    QString elided = metrics.elidedText(og_text, Qt::ElideRight, width() - 15 - iconW);
     QPushButton::setText(elided);
 }

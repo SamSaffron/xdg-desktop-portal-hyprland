@@ -8,6 +8,10 @@
 #include <QtDebug>
 #include <QtWidgets>
 #include <QSettings>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QWindow>
 #include <array>
 #include <cstdio>
 #include <iostream>
@@ -19,7 +23,7 @@
 using namespace Hyprutils::OS;
 
 #include "mainpicker.h"
-#include "elidedbutton.h"
+#include "waylandcapture.h"
 
 std::string execAndGet(const char* cmd) {
     std::string command = cmd + std::string{" 2>&1"};
@@ -30,15 +34,6 @@ std::string execAndGet(const char* cmd) {
 
     return proc.stdOut();
 }
-
-QApplication* pickerPtr     = nullptr;
-MainPicker*   mainPickerPtr = nullptr;
-
-struct SWindowEntry {
-    std::string        name;
-    std::string        clazz;
-    unsigned long long id = 0;
-};
 
 std::vector<SWindowEntry> getWindows(const char* env) {
     std::vector<SWindowEntry> result;
@@ -66,7 +61,13 @@ std::vector<SWindowEntry> getWindows(const char* env) {
         const auto WINDOWADDR = rolling.substr(TITLESEPPOS + 5, WINDOWSEPPOS - 5 - TITLESEPPOS);
 
         try {
-            result.push_back({TITLESTR, CLASSSTR, std::stoull(IDSTR)});
+            unsigned long long id = std::stoull(IDSTR);
+            unsigned long long handle = 0;
+            try {
+                handle = std::stoull(WINDOWADDR);
+            } catch (...) {}
+            
+            result.push_back({TITLESTR, CLASSSTR, id, handle});
         } catch (std::exception& e) {
             // silent err
         }
@@ -77,184 +78,86 @@ std::vector<SWindowEntry> getWindows(const char* env) {
     return result;
 }
 
+std::vector<SWindowEntry> getWindowsFromHyprctl() {
+    std::vector<SWindowEntry> result;
+    std::string jsonRaw = execAndGet("hyprctl clients -j");
+
+    if (jsonRaw == "error" || jsonRaw.empty()) {
+        std::cerr << "[picker] failed to get clients from hyprctl" << std::endl;
+        return result;
+    }
+
+    QJsonDocument doc = QJsonDocument::fromJson(QByteArray::fromStdString(jsonRaw));
+    if (doc.isNull() || !doc.isArray()) {
+        std::cerr << "[picker] failed to parse hyprctl json" << std::endl;
+        return result;
+    }
+
+    QJsonArray arr = doc.array();
+    for (const auto& val : arr) {
+        if (!val.isObject()) continue;
+        QJsonObject obj = val.toObject();
+
+        std::string clazz = obj["class"].toString().toStdString();
+        std::string title = obj["title"].toString().toStdString();
+        std::string addressStr = obj["address"].toString().toStdString();
+        unsigned long long id = 0;
+        try {
+             id = std::stoull(addressStr, nullptr, 16);
+        } catch (...) {}
+
+        result.push_back({title, clazz, id, id});
+    }
+    return result;
+}
+
 int main(int argc, char* argv[]) {
     qputenv("QT_LOGGING_RULES", "qml=false");
 
     bool allowTokenByDefault = false;
+    bool testMode = false;
+
     for (int i = 1; i < argc; ++i) {
         if (argv[i] == std::string{"--allow-token"})
             allowTokenByDefault = true;
+        else if (argv[i] == std::string{"--test"})
+            testMode = true;
     }
 
-    const char*  WINDOWLISTSTR = getenv("XDPH_WINDOW_SHARING_LIST");
-    const auto   WINDOWLIST    = getWindows(WINDOWLISTSTR);
+    std::vector<SWindowEntry> WINDOWLIST;
+
+    if (testMode) {
+        WINDOWLIST = getWindowsFromHyprctl();
+    } else {
+        const char*  WINDOWLISTSTR = getenv("XDPH_WINDOW_SHARING_LIST");
+        WINDOWLIST    = getWindows(WINDOWLISTSTR);
+    }
 
     QApplication picker(argc, argv);
-    pickerPtr = &picker;
+    QCoreApplication::setApplicationName("org.hyprland.xdg-desktop-portal-hyprland");
+    QCoreApplication::setOrganizationName("hyprland");
+    QGuiApplication::setDesktopFileName("org.hyprland.xdg-desktop-portal-hyprland");
+
     MainPicker w;
-    mainPickerPtr = &w;
+    w.init(WINDOWLIST, allowTokenByDefault);
+
+    WaylandCapture* waylandCapture = new WaylandCapture(&w);
+
+    QObject::connect(waylandCapture, &WaylandCapture::frameCaptured, &w, &MainPicker::updateWindowPreview);
+
+    // Start capturing
+    for (const auto& window : WINDOWLIST) {
+        if (window.handle > 0)
+            waylandCapture->capture(window.handle);
+    }
 
     QSettings* settings = new QSettings("/tmp/hypr/hyprland-share-picker.conf", QSettings::IniFormat);
-    w.setGeometry(0, 0, settings->value("width").toInt(), settings->value("height").toInt());
-
-    QCoreApplication::setApplicationName("org.hyprland.xdg-desktop-portal-hyprland");
-
-    // get the tabwidget
-    const auto TABWIDGET        = w.findChild<QTabWidget*>("tabWidget");
-    const auto ALLOWTOKENBUTTON = w.findChild<QCheckBox*>("checkBox");
-
-    if (allowTokenByDefault)
-        ALLOWTOKENBUTTON->setCheckState(Qt::CheckState::Checked);
-
-    const auto TAB1 = (QWidget*)TABWIDGET->children()[0];
-
-    const auto SCREENS_SCROLL_AREA_CONTENTS =
-        (QWidget*)TAB1->findChild<QWidget*>("screens")->findChild<QScrollArea*>("scrollArea")->findChild<QWidget*>("scrollAreaWidgetContents");
-
-    const auto SCREENS_SCROLL_AREA_CONTENTS_LAYOUT = SCREENS_SCROLL_AREA_CONTENTS->layout();
-
-    // add all screens
-    const auto    SCREENS = picker.screens();
-
-    constexpr int BUTTON_HEIGHT = 41;
-
-    for (int i = 0; i < SCREENS.size(); ++i) {
-        const auto    GEOMETRY = SCREENS[i]->geometry();
-
-        QString       text = QString::fromStdString(std::string("Screen " + std::to_string(i) + " at " + std::to_string(GEOMETRY.x()) + ", " + std::to_string(GEOMETRY.y()) + " (" +
-                                                                std::to_string(GEOMETRY.width()) + "x" + std::to_string(GEOMETRY.height()) + ") (") +
-                                                    SCREENS[i]->name().toStdString() + ")");
-        QString       outputName = SCREENS[i]->name();
-        ElidedButton* button     = new ElidedButton(text);
-        button->setMinimumSize(0, BUTTON_HEIGHT);
-        SCREENS_SCROLL_AREA_CONTENTS_LAYOUT->addWidget(button);
-
-        QObject::connect(button, &QPushButton::clicked, [=]() {
-            std::cout << "[SELECTION]";
-            std::cout << (ALLOWTOKENBUTTON->isChecked() ? "r" : "");
-            std::cout << "/";
-
-            std::cout << "screen:" << outputName.toStdString() << "\n";
-
-            settings->setValue("width", mainPickerPtr->width());
-            settings->setValue("height", mainPickerPtr->height());
-            settings->sync();
-
-            pickerPtr->quit();
-            return 0;
-        });
+    if (settings->contains("width") && settings->contains("height")) {
+        int w_val = settings->value("width").toInt();
+        int h_val = settings->value("height").toInt();
+        if (w_val > 0 && h_val > 0)
+            w.resize(w_val, h_val); // Using resize instead of setGeometry
     }
-
-    QSpacerItem* SCREENS_SPACER = new QSpacerItem(0, 10000, QSizePolicy::Expanding, QSizePolicy::Expanding);
-    SCREENS_SCROLL_AREA_CONTENTS_LAYOUT->addItem(SCREENS_SPACER);
-
-    // windows
-    const auto WINDOWS_SCROLL_AREA_CONTENTS =
-        (QWidget*)TAB1->findChild<QWidget*>("windows")->findChild<QScrollArea*>("scrollArea_2")->findChild<QWidget*>("scrollAreaWidgetContents_2");
-
-    const auto WINDOWS_SCROLL_AREA_CONTENTS_LAYOUT = WINDOWS_SCROLL_AREA_CONTENTS->layout();
-
-    // loop over them
-    int windowIterator = 0;
-    for (auto& window : WINDOWLIST) {
-        QString       text = QString::fromStdString(window.clazz + ": " + window.name);
-
-        ElidedButton* button = new ElidedButton(text);
-        button->setMinimumSize(0, BUTTON_HEIGHT);
-        WINDOWS_SCROLL_AREA_CONTENTS_LAYOUT->addWidget(button);
-
-        mainPickerPtr->windowIDs[button] = window.id;
-
-        QObject::connect(button, &QPushButton::clicked, [=]() {
-            std::cout << "[SELECTION]";
-            std::cout << (ALLOWTOKENBUTTON->isChecked() ? "r" : "");
-            std::cout << "/";
-
-            std::cout << "window:" << mainPickerPtr->windowIDs[button] << "\n";
-
-            settings->setValue("width", mainPickerPtr->width());
-            settings->setValue("height", mainPickerPtr->height());
-            settings->sync();
-
-            pickerPtr->quit();
-            return 0;
-        });
-
-        windowIterator++;
-    }
-
-    QSpacerItem* WINDOWS_SPACER = new QSpacerItem(0, 10000, QSizePolicy::Expanding, QSizePolicy::Expanding);
-    WINDOWS_SCROLL_AREA_CONTENTS_LAYOUT->addItem(WINDOWS_SPACER);
-
-    // lastly, region
-    const auto    REGION_OBJECT = (QWidget*)TAB1->findChild<QWidget*>("region");
-    const auto    REGION_LAYOUT = REGION_OBJECT->layout();
-
-    QString       text = "Select region...";
-
-    ElidedButton* button = new ElidedButton(text);
-    button->setMaximumSize(400, BUTTON_HEIGHT);
-    REGION_LAYOUT->addWidget(button);
-
-    QObject::connect(button, &QPushButton::clicked, [=]() {
-        auto REGION = execAndGet("slurp -f \"%o %x %y %w %h\"");
-        REGION      = REGION.substr(0, REGION.length());
-
-        // now, get the screen
-        QScreen* pScreen = nullptr;
-        if (REGION.find_first_of(' ') == std::string::npos) {
-            std::cout << "error1\n";
-            pickerPtr->quit();
-            return 1;
-        }
-        const auto SCREEN_NAME = REGION.substr(0, REGION.find_first_of(' '));
-
-        for (auto& screen : SCREENS) {
-            if (screen->name().toStdString() == SCREEN_NAME) {
-                pScreen = screen;
-                break;
-            }
-        }
-
-        if (!pScreen) {
-            std::cout << "error2\n";
-            pickerPtr->quit();
-            return 1;
-        }
-
-        // get all the coords
-        try {
-            REGION       = REGION.substr(REGION.find_first_of(' ') + 1);
-            const auto X = std::stoi(REGION.substr(0, REGION.find_first_of(' ')));
-            REGION       = REGION.substr(REGION.find_first_of(' ') + 1);
-            const auto Y = std::stoi(REGION.substr(0, REGION.find_first_of(' ')));
-            REGION       = REGION.substr(REGION.find_first_of(' ') + 1);
-            const auto W = std::stoi(REGION.substr(0, REGION.find_first_of(' ')));
-            REGION       = REGION.substr(REGION.find_first_of(' ') + 1);
-            const auto H = std::stoi(REGION);
-
-            std::cout << "[SELECTION]";
-            std::cout << (ALLOWTOKENBUTTON->isChecked() ? "r" : "");
-            std::cout << "/";
-
-            std::cout << "region:" << SCREEN_NAME << "@" << X - pScreen->geometry().x() << "," << Y - pScreen->geometry().y() << "," << W << "," << H << "\n";
-
-            settings->setValue("width", mainPickerPtr->width());
-            settings->setValue("height", mainPickerPtr->height());
-            settings->sync();
-
-            pickerPtr->quit();
-            return 0;
-        } catch (...) {
-            std::cout << "error3\n";
-            pickerPtr->quit();
-            return 1;
-        }
-
-        std::cout << "error4\n";
-        pickerPtr->quit();
-        return 1;
-    });
 
     w.show();
     return picker.exec();

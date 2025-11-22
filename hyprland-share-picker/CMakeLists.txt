@@ -22,10 +22,60 @@ pkg_check_modules(
   deps
   REQUIRED
   IMPORTED_TARGET
-  hyprutils>=0.2.6)
+  hyprutils>=0.2.6
+  wayland-client
+  wayland-protocols)
+
+find_program(HYPRWAYLAND_SCANNER hyprwayland-scanner)
+
+# protocols
+pkg_get_variable(HYPRLAND_PROTOCOLS_DIR hyprland-protocols pkgdatadir)
+if (NOT HYPRLAND_PROTOCOLS_DIR)
+    set(HYPRLAND_PROTOCOLS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../subprojects/hyprland-protocols/protocols")
+else()
+    set(HYPRLAND_PROTOCOLS_DIR "${HYPRLAND_PROTOCOLS_DIR}/protocols")
+endif()
+
+# make sure the output directory exists
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/protocols)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/protocols/hyprland-toplevel-export-v1.cpp
+           ${CMAKE_CURRENT_BINARY_DIR}/protocols/hyprland-toplevel-export-v1.hpp
+    COMMAND ${HYPRWAYLAND_SCANNER} --client ${HYPRLAND_PROTOCOLS_DIR}/hyprland-toplevel-export-v1.xml
+            ${CMAKE_CURRENT_BINARY_DIR}/protocols/
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/protocols/wlr-foreign-toplevel-management-unstable-v1.cpp
+           ${CMAKE_CURRENT_BINARY_DIR}/protocols/wlr-foreign-toplevel-management-unstable-v1.hpp
+    COMMAND ${HYPRWAYLAND_SCANNER} --client ${CMAKE_CURRENT_SOURCE_DIR}/../protocols/wlr-foreign-toplevel-management-unstable-v1.xml
+            ${CMAKE_CURRENT_BINARY_DIR}/protocols/
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/protocols/wayland.cpp
+           ${CMAKE_CURRENT_BINARY_DIR}/protocols/wayland.hpp
+    COMMAND ${HYPRWAYLAND_SCANNER} --wayland-enums --client
+            /usr/share/wayland/wayland.xml ${CMAKE_CURRENT_BINARY_DIR}/protocols/
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+)
+
+set(PROTOCOL_SOURCES
+    ${CMAKE_CURRENT_BINARY_DIR}/protocols/hyprland-toplevel-export-v1.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/protocols/hyprland-toplevel-export-v1.hpp
+    ${CMAKE_CURRENT_BINARY_DIR}/protocols/wlr-foreign-toplevel-management-unstable-v1.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/protocols/wlr-foreign-toplevel-management-unstable-v1.hpp
+    ${CMAKE_CURRENT_BINARY_DIR}/protocols/wayland.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/protocols/wayland.hpp
+)
+
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/protocols)
 
 set(PROJECT_SOURCES main.cpp mainpicker.cpp mainpicker.h mainpicker.ui
-                    elidedbutton.h elidedbutton.cpp)
+                    elidedbutton.h elidedbutton.cpp waylandcapture.cpp waylandcapture.h ${PROTOCOL_SOURCES})
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
   qt_add_executable(hyprland-share-picker MANUAL_FINALIZATION

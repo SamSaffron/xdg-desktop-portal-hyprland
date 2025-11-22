@@ -9,6 +9,7 @@ public:
     explicit ElidedButton(QWidget *parent = nullptr);
     explicit ElidedButton(const QString &text, QWidget *parent = nullptr);
     void setText(QString);
+    void setIcon(const QIcon &icon);
 
 protected:
     void resizeEvent(QResizeEvent *);
