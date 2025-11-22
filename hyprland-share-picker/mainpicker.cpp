@@ -50,7 +50,13 @@ void MainPicker::init(const std::vector<SWindowEntry>& windows, bool allowToken)
     // Populate windows
     for (const auto& win : windows) {
         QString text = QString::fromStdString(win.clazz + ": " + win.name);
-        auto item = new QListWidgetItem(text);
+        
+        QString clazz = QString::fromStdString(win.clazz);
+        QIcon icon = QIcon::fromTheme(clazz);
+        if (icon.isNull())
+            icon = QIcon::fromTheme(clazz.toLower());
+            
+        auto item = new QListWidgetItem(icon, text);
         ui->windowList->addItem(item);
         m_windowMap[item] = win.id;
         m_windowHandleMap[item] = win.handle;
