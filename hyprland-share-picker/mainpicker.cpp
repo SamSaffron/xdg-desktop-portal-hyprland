@@ -24,9 +24,14 @@ MainPicker::~MainPicker()
     delete ui;
 }
 
-void MainPicker::init(const std::vector<SWindowEntry>& windows, bool allowToken) {
-    if (allowToken)
-        ui->checkBox->setCheckState(Qt::Checked);
+void MainPicker::init(const std::vector<SWindowEntry>& windows, bool allowToken, bool showTokenCheckbox) {
+    if (showTokenCheckbox) {
+        ui->checkBox->setVisible(true);
+        if (allowToken)
+            ui->checkBox->setCheckState(Qt::Checked);
+    } else {
+        ui->checkBox->setVisible(false);
+    }
 
     // Populate screens
     const auto SCREENS = QGuiApplication::screens();
@@ -211,7 +216,8 @@ void MainPicker::onCancel() {
 
 void MainPicker::finish(const std::string& result) {
     std::cout << "[SELECTION]";
-    std::cout << (ui->checkBox->isChecked() ? "r" : "");
+    // If checkbox is not visible, always allow restore token
+    std::cout << (ui->checkBox->isVisible() ? (ui->checkBox->isChecked() ? "r" : "") : "r");
     std::cout << "/";
     std::cout << result << "\n";
 

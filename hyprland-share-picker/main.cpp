@@ -114,7 +114,8 @@ std::vector<SWindowEntry> getWindowsFromHyprctl() {
 int main(int argc, char* argv[]) {
     qputenv("QT_LOGGING_RULES", "qml=false");
 
-    bool allowTokenByDefault = false;
+    bool allowTokenByDefault = true;
+    bool allowTokenSelection = getenv("XDPH_PICKER_ALLOW_TOKEN_SELECTION") != nullptr;
     bool testMode = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -139,7 +140,7 @@ int main(int argc, char* argv[]) {
     QGuiApplication::setDesktopFileName("org.hyprland.xdg-desktop-portal-hyprland");
 
     MainPicker w;
-    w.init(WINDOWLIST, allowTokenByDefault);
+    w.init(WINDOWLIST, allowTokenByDefault, allowTokenSelection);
 
     WaylandCapture* waylandCapture = new WaylandCapture(&w);
 

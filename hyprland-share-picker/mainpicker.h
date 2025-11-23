@@ -28,7 +28,7 @@ public:
     MainPicker(QWidget *parent = nullptr);
     ~MainPicker();
 
-    void init(const std::vector<SWindowEntry>& windows, bool allowToken);
+    void init(const std::vector<SWindowEntry>& windows, bool allowToken, bool showTokenCheckbox);
     void updateWindowPreview(unsigned long long handle, const QImage& image);
 
 protected:
