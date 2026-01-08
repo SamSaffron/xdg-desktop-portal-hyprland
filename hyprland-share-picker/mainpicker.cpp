@@ -54,8 +54,16 @@ void MainPicker::init(const std::vector<SWindowEntry>& windows, bool allowToken,
 
     // Populate windows
     for (const auto& win : windows) {
-        QString text = QString::fromStdString(win.clazz + ": " + win.name);
-        
+        QString text;
+        if (!win.workspaceName.empty()) {
+            text = QString("[%1] %2: %3")
+                .arg(QString::fromStdString(win.workspaceName))
+                .arg(QString::fromStdString(win.clazz))
+                .arg(QString::fromStdString(win.name));
+        } else {
+            text = QString::fromStdString(win.clazz + ": " + win.name);
+        }
+
         QString clazz = QString::fromStdString(win.clazz);
         QIcon icon = QIcon::fromTheme(clazz);
         if (icon.isNull())

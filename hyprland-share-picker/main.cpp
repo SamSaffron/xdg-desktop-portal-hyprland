@@ -19,6 +19,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <unordered_map>
+#include <algorithm>
 #include <hyprutils/os/Process.hpp>
 using namespace Hyprutils::OS;
 
@@ -111,6 +113,69 @@ std::vector<SWindowEntry> getWindowsFromHyprctl() {
     return result;
 }
 
+struct WorkspaceInfo {
+    int currentWorkspaceId = -1;
+    std::unordered_map<uint64_t, std::pair<int, std::string>> windowWorkspaces;
+};
+
+WorkspaceInfo queryWorkspaceInfo() {
+    WorkspaceInfo info;
+
+    // Get active workspace
+    std::string activeWsJson = execAndGet("hyprctl activeworkspace -j");
+    if (activeWsJson != "error" && !activeWsJson.empty()) {
+        QJsonDocument doc = QJsonDocument::fromJson(QByteArray::fromStdString(activeWsJson));
+        if (!doc.isNull() && doc.isObject()) {
+            info.currentWorkspaceId = doc.object()["id"].toInt(-1);
+        }
+    }
+
+    // Get all clients with their workspaces
+    std::string clientsJson = execAndGet("hyprctl clients -j");
+    if (clientsJson != "error" && !clientsJson.empty()) {
+        QJsonDocument doc = QJsonDocument::fromJson(QByteArray::fromStdString(clientsJson));
+        if (!doc.isNull() && doc.isArray()) {
+            for (const auto& val : doc.array()) {
+                QJsonObject obj = val.toObject();
+                QString addrStr = obj["address"].toString();
+                if (addrStr.startsWith("0x")) {
+                    uint64_t addr = addrStr.mid(2).toULongLong(nullptr, 16);
+                    QJsonObject ws = obj["workspace"].toObject();
+                    int wsId = ws["id"].toInt(-1);
+                    std::string wsName = ws["name"].toString().toStdString();
+                    info.windowWorkspaces[addr] = {wsId, wsName};
+                }
+            }
+        }
+    }
+
+    return info;
+}
+
+void enrichAndSortWindows(std::vector<SWindowEntry>& windows) {
+    WorkspaceInfo info = queryWorkspaceInfo();
+
+    // Enrich windows with workspace data
+    for (auto& win : windows) {
+        auto it = info.windowWorkspaces.find(win.handle);
+        if (it != info.windowWorkspaces.end()) {
+            win.workspaceId = it->second.first;
+            win.workspaceName = it->second.second;
+        }
+    }
+
+    // Sort: current workspace first, then by workspace ID
+    int currentWs = info.currentWorkspaceId;
+    std::stable_sort(windows.begin(), windows.end(),
+        [currentWs](const SWindowEntry& a, const SWindowEntry& b) {
+            bool aIsCurrent = (a.workspaceId == currentWs);
+            bool bIsCurrent = (b.workspaceId == currentWs);
+            if (aIsCurrent != bIsCurrent)
+                return aIsCurrent;
+            return a.workspaceId < b.workspaceId;
+        });
+}
+
 int main(int argc, char* argv[]) {
     qputenv("QT_LOGGING_RULES", "qml=false");
 
@@ -133,6 +198,8 @@ int main(int argc, char* argv[]) {
         const char*  WINDOWLISTSTR = getenv("XDPH_WINDOW_SHARING_LIST");
         WINDOWLIST    = getWindows(WINDOWLISTSTR);
     }
+
+    enrichAndSortWindows(WINDOWLIST);
 
     QApplication picker(argc, argv);
     QCoreApplication::setApplicationName("org.hyprland.xdg-desktop-portal-hyprland");

@@ -18,6 +18,8 @@ struct SWindowEntry {
     std::string        clazz;
     unsigned long long id = 0;
     unsigned long long handle = 0;
+    int                workspaceId = -1;
+    std::string        workspaceName;
 };
 
 class MainPicker : public QDialog
