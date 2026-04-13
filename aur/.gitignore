@@ -1,0 +1,5 @@
+src/
+pkg/
+xdg-desktop-portal-hyprland/
+*.pkg.tar.*
+*.log
